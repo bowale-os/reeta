@@ -1,11 +1,13 @@
 """FastAPI app. Providers are chosen by SPEECH_PROVIDER / LLM_PROVIDER / DB_PROVIDER."""
 import json
+import logging
 import mimetypes
+import os
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from .accounts import Accounts
@@ -27,6 +29,20 @@ def build_service() -> ReetaService:
 
 
 app = FastAPI(title="Reeta: teach the AI student")
+
+
+@app.middleware("http")
+async def log_unhandled_errors(request, call_next):
+    """Log the traceback and answer a JSON 500. Added before CORS so the CORS middleware wraps it: the browser then
+    sees the real error instead of a misleading CORS failure. DEBUG_ERRORS=1 puts the exception text in the response."""
+    try:
+        return await call_next(request)
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger("uvicorn.error").exception("Unhandled error on %s %s", request.method, request.url.path)
+        detail = f"{type(exc).__name__}: {exc}" if os.getenv("DEBUG_ERRORS") == "1" else "Internal Server Error"
+        return JSONResponse({"detail": detail}, status_code=500)
+
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 svc = build_service()
 accounts = Accounts(svc.repo, settings.pass_threshold)
